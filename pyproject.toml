@@ -5,7 +5,10 @@ description = "Fast scraper for Facebook Ads Library — videos + metadata + rep
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "Lucas Faria", email = "lfariafon@gmail.com" }]
+authors = [
+    { name = "Cristiano Sanna", email = "c.sanna22510@gmail.com" },
+    { name = "Lucas Faria (original)", email = "lfariafon@gmail.com" },
+]
 keywords = ["facebook", "ads-library", "scraper", "competitor-intelligence", "playwright"]
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -22,8 +25,8 @@ ads-library-scraper = "ads_library_scraper.cli:main"
 ads-library-batch = "ads_library_scraper.batch:main"
 
 [project.urls]
-Homepage = "https://github.com/lucasgrow/ads-library-scraper"
-Issues = "https://github.com/lucasgrow/ads-library-scraper/issues"
+Homepage = "https://github.com/CrisDev01-PB/ads-library-scraper"
+Issues = "https://github.com/CrisDev01-PB/ads-library-scraper/issues"
 
 [build-system]
 requires = ["hatchling"]

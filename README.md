@@ -22,7 +22,7 @@ export PATH="$HOME/.local/bin:$PATH"
 **Install globally:**
 
 ```bash
-uv tool install git+https://github.com/cristianosanna/ads-library-scraper
+uv tool install git+https://github.com/CrisDev01-PB/ads-library-scraper
 ```
 
 This puts `ads-library-scraper` and `ads-library-batch` on your PATH. To update: `uv tool upgrade ads-library-scraper`.
@@ -30,7 +30,7 @@ This puts `ads-library-scraper` and `ads-library-batch` on your PATH. To update:
 **Or one-shot, no install:**
 
 ```bash
-uvx --from git+https://github.com/cristianosanna/ads-library-scraper \
+uvx --from git+https://github.com/CrisDev01-PB/ads-library-scraper \
     ads-library-batch 581718728356117 --output ~/swipe.md
 ```
 
