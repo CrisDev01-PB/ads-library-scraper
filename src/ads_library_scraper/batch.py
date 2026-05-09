@@ -235,6 +235,23 @@ def main(argv=None):
 
     args.output.write_text("\n".join(lines), encoding="utf-8")
     log(f"\n✅ Wrote {args.output} ({args.output.stat().st_size:,} bytes)")
+
+    # Final summary line — easy for Claude/scripts to parse
+    media_totals = {}
+    for _, result in all_pages:
+        if result is None:
+            continue
+        for ad in result.ads:
+            media_totals[ad.media_type] = media_totals.get(ad.media_type, 0) + 1
+    media_str = " ".join(f"{k}={v}" for k, v in sorted(media_totals.items()))
+    failed = sum(1 for _, r in all_pages if r is None)
+    transcribed = sum(1 for v in transcripts.values() if v and not v.startswith("("))
+    print(
+        f"SUMMARY: pages={len(page_ids)} pages_failed={failed} "
+        f"total_ads={total_ads} {media_str} "
+        f"transcribed={transcribed} output={args.output}",
+        flush=True,
+    )
     return 0
 
 
