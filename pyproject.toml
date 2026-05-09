@@ -6,8 +6,8 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 authors = [
-    { name = "Cristiano Sanna", email = "c.sanna22510@gmail.com" },
-    { name = "Lucas Faria (original)", email = "lfariafon@gmail.com" },
+    { name = "Cristiano Sanna" },
+    { name = "Lucas Faria (original)" },
 ]
 keywords = ["facebook", "ads-library", "scraper", "competitor-intelligence", "playwright"]
 classifiers = [
