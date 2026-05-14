@@ -23,6 +23,10 @@ _EXTRACT_JS = r"""
     // Date prefix used to detect when the ad started running. Multilingual.
     const DATE_PATTERN = /(?:Started running on|Began running on|Iniziato il|Pubblicata il|Empezó a publicarse el|Se publicó el|Começou a veicular em|Diffusion lancée le|Läuft seit|Start uitgezonden op|Yayınlanmaya başlama tarihi)\s*[:]?\s*(.+?)(?:\n|$)/i;
 
+    // Library ID — the unique identifier for a single ad. Lets us build the
+    // single-ad URL: https://www.facebook.com/ads/library/?id=<LIBRARY_ID>
+    const LIBRARY_ID_PATTERN = /(?:Library ID|ID biblioteca|Identificativo|ID de la biblioteca|Identifiant de la bibliothèque|Bibliothek-ID|ID-bibliothèque|Identifizierungsnummer|Identyfikator biblioteki|Kütüphane Kimliği)\s*[:：]?\s*(\d{8,})/i;
+
     // Find every element that contains the card marker (Library ID etc.).
     // The marker lives in the AD CARD HEADER — a small metadata block at the
     // top of each ad. We then walk UP from each header to find the full ad
@@ -77,6 +81,10 @@ _EXTRACT_JS = r"""
         // --- Start date ---
         const dateMatch = DATE_PATTERN.exec(text);
         const startDate = dateMatch ? dateMatch[1].trim() : '';
+
+        // --- Library ID (single ad URL) ---
+        const idMatch = LIBRARY_ID_PATTERN.exec(text);
+        const libraryId = idMatch ? idMatch[1].trim() : '';
 
         // --- Outbound link + CTA ---
         let linkUrl = '';
@@ -161,6 +169,7 @@ _EXTRACT_JS = r"""
             linkUrl,
             linkTitle,
             startDate,
+            libraryId,
             mediaType,
             videoUrl,
             imageUrls: imageUrls.slice(0, 10),
@@ -199,8 +208,13 @@ class Ad:
     link_title: str
     start_date: str
     media_type: str  # video / image / carousel / text
+    library_id: str = ""
     video_url: str = ""
     image_urls: list[str] = field(default_factory=list)
+
+    @property
+    def library_url(self) -> str:
+        return f"https://www.facebook.com/ads/library/?id={self.library_id}" if self.library_id else ""
 
 
 @dataclass
@@ -243,9 +257,13 @@ def scrape(
 
         progress(f"scrolling up to {scroll_count}x to load ads")
         last_height = 0
+        unchanged_streak = 0
+        # Meta's lazy loader sometimes pauses 5-15 sec between batches.
+        # Require 6 consecutive unchanged scrolls before declaring done.
+        UNCHANGED_THRESHOLD = 6
         for i in range(scroll_count):
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            time.sleep(3)
+            time.sleep(5)
             page.evaluate(
                 """
                 document.querySelectorAll('div[role="button"]').forEach(b => {
@@ -257,9 +275,16 @@ def scrape(
                 """
             )
             new_height = page.evaluate("document.body.scrollHeight")
-            progress(f"  scroll {i + 1}/{scroll_count} (height: {new_height})")
-            if new_height == last_height and i > 2:
-                progress(f"  no more content loading, stopping early")
+            if new_height == last_height:
+                unchanged_streak += 1
+                # Try a small jitter scroll to nudge the loader awake
+                page.evaluate("window.scrollBy(0, -200); window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(3)
+            else:
+                unchanged_streak = 0
+            progress(f"  scroll {i + 1}/{scroll_count} (height: {new_height}, unchanged: {unchanged_streak}/{UNCHANGED_THRESHOLD})")
+            if unchanged_streak >= UNCHANGED_THRESHOLD and i > 5:
+                progress(f"  no more content loading after {UNCHANGED_THRESHOLD} stable scrolls, stopping")
                 break
             last_height = new_height
 
@@ -279,6 +304,7 @@ def scrape(
             link_title=a["linkTitle"],
             start_date=a["startDate"],
             media_type=a.get("mediaType", "unknown"),
+            library_id=a.get("libraryId", ""),
             video_url=a.get("videoUrl", ""),
             image_urls=a.get("imageUrls", []),
         )

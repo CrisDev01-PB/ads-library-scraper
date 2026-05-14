@@ -6,6 +6,8 @@ import shutil
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -16,6 +18,30 @@ from ads_library_scraper.url import build_library_url, extract_page_id
 
 def _has_mlx_whisper() -> bool:
     return shutil.which("mlx_whisper") is not None
+
+
+def _parse_ad_date(s):
+    """Parse 'May 1, 2026' / 'October 12, 2025' into datetime. None if unparseable."""
+    if not s:
+        return None
+    s = s.strip()
+    for fmt in ("%b %d, %Y", "%B %d, %Y"):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _filter_ads_since(ads, since_days):
+    """Keep only ads whose start_date is within the last N days. Drops ads
+    whose start_date is missing or unparseable — for a recency filter we
+    treat 'unknown date' as 'exclude' (safer for noise reduction)."""
+    cutoff = (
+        datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        - timedelta(days=since_days)
+    )
+    return [ad for ad in ads if (d := _parse_ad_date(ad.start_date)) is not None and d >= cutoff]
 
 
 async def _download_one(client, url, out_path):
@@ -84,9 +110,23 @@ def main(argv=None):
         help="Cap videos transcribed per page (default: no cap)",
     )
     parser.add_argument(
+        "--since-days",
+        type=int,
+        default=None,
+        help="Keep only ads whose Started date is within the last N days (default: no filter). "
+             "Filter is applied after scrape, before download/transcribe — old ads are dropped "
+             "before any video work, so this directly bounds runtime on weekly cron jobs.",
+    )
+    parser.add_argument(
         "--whisper-model",
         default="mlx-community/whisper-large-v3-turbo",
         help="mlx-whisper model id (default: large-v3-turbo)",
+    )
+    parser.add_argument(
+        "--transcribe-workers",
+        type=int,
+        default=1,
+        help="Number of parallel mlx_whisper processes (default: 1). Use 2 for ~2x speedup on Apple Silicon.",
     )
     parser.add_argument(
         "--output",
@@ -132,6 +172,16 @@ def main(argv=None):
             log(f"  ❌ scrape failed: {e}")
             all_pages.append((pid, None))
 
+    # ---- Phase 1.5: recency filter (if --since-days) ----
+    if args.since_days is not None:
+        log(f"\n=== Filtering to ads from last {args.since_days} days ===")
+        for pid, result in all_pages:
+            if result is None:
+                continue
+            before = len(result.ads)
+            result.ads = _filter_ads_since(result.ads, args.since_days)
+            log(f"  {pid} ({result.page_name}): {before} → {len(result.ads)} ads")
+
     # ---- Phase 2: download videos (if --transcribe) ----
     download_jobs = []  # (page_idx, ad_idx, url, out_path)
     if args.transcribe:
@@ -159,18 +209,43 @@ def main(argv=None):
     # ---- Phase 3: transcribe ----
     transcripts = {}
     if args.transcribe and download_jobs:
-        log(f"\n=== Phase 3: transcribing {len(download_jobs)} videos ===")
-        for n, (page_idx, ad_idx, _url, mp4) in enumerate(download_jobs, 1):
+        workers = max(1, args.transcribe_workers)
+        log(f"\n=== Phase 3: transcribing {len(download_jobs)} videos ({workers} worker{'s' if workers > 1 else ''}) ===")
+
+        def _do_one(job):
+            page_idx, ad_idx, _url, mp4 = job
+            key = (page_idx, ad_idx)
             if not mp4.exists() or mp4.stat().st_size < 1000:
-                transcripts[(page_idx, ad_idx)] = "(download failed or empty)"
-                continue
-            log(f"  [{n}/{len(download_jobs)}] {mp4.parent.name} / ad {ad_idx}")
+                return key, "(download failed or empty)"
             try:
-                transcripts[(page_idx, ad_idx)] = _transcribe(mp4, model=args.whisper_model)
+                return key, _transcribe(mp4, model=args.whisper_model)
             except subprocess.TimeoutExpired:
-                transcripts[(page_idx, ad_idx)] = "(transcribe timed out)"
+                return key, "(transcribe timed out)"
             except Exception as e:
-                transcripts[(page_idx, ad_idx)] = f"(transcribe error: {e})"
+                return key, f"(transcribe error: {e})"
+
+        if workers == 1:
+            for n, job in enumerate(download_jobs, 1):
+                page_idx, ad_idx, _url, mp4 = job
+                log(f"  [{n}/{len(download_jobs)}] {mp4.parent.name} / ad {ad_idx}")
+                key, t = _do_one(job)
+                transcripts[key] = t
+        else:
+            done = 0
+            with ThreadPoolExecutor(max_workers=workers) as ex:
+                futures = {ex.submit(_do_one, job): job for job in download_jobs}
+                for fut in as_completed(futures):
+                    done += 1
+                    job = futures[fut]
+                    _, _, _, mp4 = job
+                    try:
+                        key, t = fut.result()
+                        transcripts[key] = t
+                        log(f"  [{done}/{len(download_jobs)}] {mp4.parent.name} / {mp4.stem} ✓")
+                    except Exception as e:
+                        page_idx, ad_idx, _, _ = job
+                        transcripts[(page_idx, ad_idx)] = f"(worker error: {e})"
+                        log(f"  [{done}/{len(download_jobs)}] {mp4.stem} ❌ {e}")
 
     # ---- Phase 4: write combined markdown ----
     log("\n=== Phase 4: writing combined markdown ===")
@@ -210,12 +285,15 @@ def main(argv=None):
             lines.append("")
             if ad.start_date:
                 lines.append(f"- **Started:** {ad.start_date}")
+            if ad.library_id:
+                lines.append(f"- **Library ID:** `{ad.library_id}`")
+                lines.append(f"- **Single ad URL:** {ad.library_url}")
             if ad.headline:
                 lines.append(f"- **Headline:** {ad.headline}")
             if ad.link_title:
                 lines.append(f"- **CTA:** {ad.link_title}")
             if ad.link_url:
-                lines.append(f"- **Link:** {ad.link_url}")
+                lines.append(f"- **Destination link:** {ad.link_url}")
             lines.append("")
 
             if ad.ad_text:

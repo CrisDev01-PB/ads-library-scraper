@@ -6,3 +6,5 @@ fb-ads-*/
 *.egg-info/
 build/
 dist/
+.DS_Store
+logs/

@@ -24,6 +24,8 @@ def write_metadata(result: ScrapeResult, out_dir: Path) -> Path:
                 "link_url": a.link_url,
                 "link_title": a.link_title,
                 "start_date": a.start_date,
+                "library_id": a.library_id,
+                "library_url": a.library_url,
                 "video_url": a.video_url,
                 "image_urls": a.image_urls,
             }
@@ -80,12 +82,15 @@ def write_report(result: ScrapeResult, out_dir: Path, downloaded: int, total_byt
         lines.append(f"### Ad #{a.index + 1} — {a.media_type}")
         if a.start_date:
             lines.append(f"- **Started:** {a.start_date}")
+        if a.library_id:
+            lines.append(f"- **Library ID:** `{a.library_id}`")
+            lines.append(f"- **Single ad URL:** {a.library_url}")
         if a.headline:
             lines.append(f"- **Headline:** {a.headline}")
         if a.link_title:
             lines.append(f"- **CTA button:** {a.link_title}")
         if a.link_url:
-            lines.append(f"- **Link:** {a.link_url}")
+            lines.append(f"- **Destination link:** {a.link_url}")
         if copy:
             lines.append("- **Copy:**")
             lines.append("")
